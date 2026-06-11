@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+    container_name: ${CONTAINER_NAME}-app
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    command: php artisan serve --host=0.0.0.0 --port=8000
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: notifications
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_QUEUE: notifications
+      QUEUE_CONNECTION: rabbitmq
+    networks:
+      - notification-network
+
+  postgres:
+    image: postgres:15
+    container_name: ${CONTAINER_NAME}-postgres
+    environment:
+      POSTGRES_DB: notifications
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - notification-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${CONTAINER_NAME}-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - notification-network
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ${CONTAINER_NAME}-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    networks:
+      - notification-network
+
+  worker:
+    build:
+      context: .
+      args:
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+    container_name: ${CONTAINER_NAME}-worker
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    command: php artisan queue:work rabbitmq --queue=notifications --sleep=1 --tries=3 --timeout=90
+    depends_on:
+      - rabbitmq
+      - postgres
+      - redis
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: notifications
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_QUEUE: notifications
+      QUEUE_CONNECTION: rabbitmq
+    networks:
+      - notification-network
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ${CONTAINER_NAME}-swagger
+    environment:
+      SWAGGER_JSON: /schema/swagger.yaml
+    volumes:
+      - ./swagger:/schema:ro
+    ports:
+      - "${SWAGGER_PORT:-8080}:8080"
+    networks:
+      - notification-network
+
+volumes:
+  postgres_data:
+
+networks:
+  notification-network:
+    driver: bridge
